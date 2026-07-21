@@ -1,20 +1,27 @@
 # deepagents-idle-compaction
 
-Compact a LangChain / deepagents conversation **after N minutes of inactivity**,
-so a big idle context never gets re-written into the prompt cache on resume.
+One of the most expensive operations your agent will run is writing a large context
+back into the cache.
 
-Trigger: `idle >= idle_seconds` **AND** `tokens >= token_threshold`
-(defaults: 59 min, 300k tokens). Summaries run on the **same model** the agent
-uses; the most recent turns are kept verbatim (partial compaction). Compaction is
-a no-op during active use, so the live cache and recent-turn fidelity are untouched.
+Anthropic models charge 2× to write into a 1-hour cache, then 0.1× to read from it.
+So if you resume a session with 500k tokens after an hour+ of inactivity, the cache
+has expired — and writing that context back in costs about **$5** on Opus, just to
+pick up where you left off.
 
-## Why
+One solution I landed on is **time-based compaction**. A cron job kicks off compaction
+right before the cache expires. It doesn't stop the cache from expiring an hour later —
+but when you resume, you're writing a small compacted summary back into the cache
+instead of the full 500k.
 
-A large context (300k–500k tokens) that sits idle past the ~1h cache TTL gets
-evicted, then **re-read and re-cached at full price** the instant the user resumes
-— several dollars of cache writes for context they may barely touch. Collapse that
-block to a short summary *before* the resume and every turn after runs on a few
-thousand tokens instead of a few hundred thousand.
+The time before compaction is configurable, and so is a token threshold — I set mine to
+300k, so this doesn't fire on every conversation that happens to be sitting idle.
+
+Right now this middleware is only compatible with **LangGraph / Deep Agents**.
+
+Trigger: `idle >= idle_seconds` **AND** `tokens >= token_threshold` (defaults: 59 min,
+300k tokens). Summaries run on the **same model** the agent uses; the most recent turns
+are kept verbatim (partial compaction), and compaction is a no-op during active use — so
+the live cache and recent-turn fidelity stay untouched.
 
 ## The two parts (both needed for at-N-min compaction)
 
